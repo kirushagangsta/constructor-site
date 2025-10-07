@@ -18,15 +18,14 @@ const htmlItems = ref<IHtmlNode[]>([
 const currentTarget = ref<Nullable<string>>(null);
 
 const addBlock = () => {
-  // TODO пофиксить хуйню с дохуя блоков при добавлении
   const target = currentTarget.value ? recursiveFind(htmlItems.value, currentTarget.value) : htmlItems.value;
+  const newBaseBlock = JSON.parse(JSON.stringify(baseBlock));
   if (currentTarget.value && target) {
     if ("children" in target) {
-      const newBaseBlock = JSON.parse(JSON.stringify(baseBlock));
       target.children.push({...newBaseBlock, id: getTargetId(target)});
     }
   } else {
-    htmlItems.value.push({...baseBlock, id: htmlItems.value.length.toString()});
+    htmlItems.value.push({...newBaseBlock, id: htmlItems.value.length.toString()});
   }
 }
 </script>
