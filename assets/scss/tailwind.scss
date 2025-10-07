@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply outline-none !important;
+  }
+
+  html {
+    @apply h-full leading-normal font-lora text-[16px] antialiased;
+  }
+
+  body {
+    @apply relative h-full bg-white;
+
+    #__nuxt {
+      @apply h-full;
+    }
+  }
+
+  input, textarea {
+    @apply appearance-none;
+  }
+  
+  button {
+    @apply select-none;
+  }
+}
