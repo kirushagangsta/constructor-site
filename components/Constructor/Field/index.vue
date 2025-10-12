@@ -8,6 +8,8 @@ const props = defineProps({
   }
 });
 
+const field = useTemplateRef('field');
+
 const emit = defineEmits(['select-target']);
 
 const createVNode = (item: IHtmlNode): VNode => {
@@ -28,15 +30,20 @@ const createVNode = (item: IHtmlNode): VNode => {
     ]
   );
 };
+
+defineExpose({
+  field
+})
 </script>
 
 <template>
   <div class="w-[1140px] h-full border border-[#000000]">
     <div
-      v-for="node in nodes"
-      :key="node.id"
+      ref="field"
     >
       <component
+        v-for="node in nodes"
+        :key="node.id"
         :is="createVNode(node)"
         @click.stop="emit('select-target', node.id)"
       >
