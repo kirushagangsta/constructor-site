@@ -1,5 +1,5 @@
-export type CssPropertyName = "padding";
-export type TailwindClassPrefix = "p";
+export type CssPropertyName = "padding" | "width";
+export type TailwindClassPrefix = "p" | "w";
 export type CssMeasureUnit = "px";
 
 export type FormattedClassData = Record<CssPropertyName, {

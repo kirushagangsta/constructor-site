@@ -34,7 +34,7 @@ const updateStyles = (propertyName: CssPropertyName) => {
   const computedVal = propertyVal.value === '' ?
     currentPropertyDeclaration!.defaultValue :
     propertyVal.value;
-  const valueWithUnit = computedVal + (propertyVal.measureUnit ?? '');
+  const valueWithUnit = computedVal + (propertyVal.measureUnit ?? currentPropertyDeclaration!.defaultUnit);
   if (!props.currentTarget.attrs.style) {
     props.currentTarget.attrs.style = {
       [propertyName]: valueWithUnit,
@@ -69,6 +69,17 @@ watch(() => props.currentTarget, () => {
         >
         <input
           v-model="extractedClassesValues['padding'].measureUnit"
+          disabled
+        >
+      </div>
+      <div class="flex gap-[16px]">
+        <div>Ширина</div>
+        <input
+          v-model="extractedClassesValues['width'].value"
+          @input="updateStyles('width')"
+        >
+        <input
+          v-model="extractedClassesValues['width'].measureUnit"
           disabled
         >
       </div>
