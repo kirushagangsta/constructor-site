@@ -5,7 +5,7 @@ export interface IHtmlNode {
   tag: string;
   attrs: {
     class?: string;
-    style?: Record<CssPropertyName, string>;
+    style?: Record<Partial<CssPropertyName>, string>;
   };
   children: Array<IHtmlNode | string>;
 }
