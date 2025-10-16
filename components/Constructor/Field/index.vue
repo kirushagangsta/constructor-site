@@ -24,9 +24,9 @@ const createVNode = (item: IHtmlNode): VNode => {
       },
     },
     [
-      item.children.map((el: IHtmlNode | string) => {
+      ...item.children.map((el: IHtmlNode | string) => {
         return typeof el === 'string' ? el : createVNode(el);
-      }).filter((el) => !!el)
+      }).filter((el) => !!el),
     ]
   );
 };

@@ -17,8 +17,13 @@ const {data: htmlItems} = useAsyncData<IHtmlNode[]>('current-file', async () => 
 const currentTarget = ref<Nullable<string>>(null);
 const constructorField = useTemplateRef('field');
 
+const currentTargetBlock = computed(() => {
+  return currentTarget.value ? recursiveFind(htmlItems.value, currentTarget.value) : null;
+})
+
+// TODO доработать систему id
 const addBlock = () => {
-  const target = currentTarget.value ? recursiveFind(htmlItems.value, currentTarget.value) : htmlItems.value;
+  const target = currentTargetBlock.value;
   const newBaseBlock = JSON.parse(JSON.stringify(baseBlock));
   if (currentTarget.value && target) {
     if ("children" in target) {
@@ -42,6 +47,7 @@ async function saveFile() {
 async function downloadFile() {
   if (constructorField.value?.field) {
     try {
+      // TODO рендерить на сервере, чтобы cносить style атрибуты
       const res = await $api.fileManager.downloadFile({
         content: constructorField.value.field.outerHTML,
       })
@@ -55,18 +61,23 @@ async function downloadFile() {
 </script>
 
 <template>
-  <div class="h-full w-fit mx-auto pl-[10px]">
+  <div class="h-full w-fit mx-auto p-[10px]">
     <div class="border-[#FF0000]  bg-[black]"></div>
     <ConstructorField
       ref="field"
       :nodes="htmlItems"
       @select-target="currentTarget = $event"
     />
-    <ConstructorToolbar
-      class="absolute top-4 right-4 h-fit"
+    <ConstructorToolbarFile
+      class="absolute top-4 left-4 h-fit"
       @add-block="addBlock"
       @save-file="saveFile"
       @download-file="downloadFile"
+    />
+    <ConstructorToolbarBlock
+      v-if="currentTargetBlock"
+      :current-target="currentTargetBlock"
+      class="absolute top-4 right-4 h-fit"
     />
   </div>
 </template>
