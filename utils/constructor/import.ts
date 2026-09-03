@@ -3,6 +3,8 @@ import {createPageNode, PAGE_ID} from "~/utils/constructor/page";
 import {styleVariants} from "~/constants/constructor/breakpoints";
 import {normalizeStyle} from "~/utils/cssClasses/extractor";
 import {stylesFromClasses} from "~/utils/cssClasses/tailwind";
+import {normalizeAssetSrc} from "~/utils/constructor/assets";
+import {buildId} from "~/utils/constructor/getId";
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -56,16 +58,15 @@ const parseStyles = (node: Record<string, unknown>, classAttr: string): IHtmlNod
 }
 
 /**
- * id из файла не используем: он должен быть цепочкой индексов по уровням вложенности,
- * иначе сломаются хлебные крошки и выбор блока. Поэтому раздаём id заново.
+ * id из файла не используем: он должен быть местом блока в дереве, иначе сломаются
+ * хлебные крошки и выбор блока. Поэтому раздаём id заново — и страницы, сохранённые
+ * со старой схемой, при загрузке сами переезжают на новую.
  */
 const parseChildren = (children: unknown, parentId: string): Array<IHtmlNode | string> => {
   if (!Array.isArray(children)) {
     return [];
   }
 
-  // блоки первого уровня живут без префикса: '0', '1', '2'
-  const idPrefix = parentId === PAGE_ID ? '' : parentId;
   const parsed: Array<IHtmlNode | string> = [];
 
   children.forEach((child) => {
@@ -76,7 +77,7 @@ const parseChildren = (children: unknown, parentId: string): Array<IHtmlNode | s
       return;
     }
 
-    const node = parseNode(child, `${idPrefix}${parsed.filter((item) => typeof item !== 'string').length}`);
+    const node = parseNode(child, buildId(parentId, parsed.filter((item) => typeof item !== 'string').length));
 
     if (node) {
       parsed.push(node);
@@ -84,6 +85,19 @@ const parseChildren = (children: unknown, parentId: string): Array<IHtmlNode | s
   });
 
   return parsed;
+}
+
+/**
+ * Значение атрибута как его хранит дерево. Классы уже разобраны отдельно,
+ * а путь до картинки из старых страниц становится ссылкой на файл: адрес
+ * ей подберёт резолвер, когда страницу будут собирать.
+ */
+const parseAttrValue = (name: string, value: string, classAttr: string) => {
+  if (name === 'class') {
+    return classAttr;
+  }
+
+  return name === 'src' ? normalizeAssetSrc(value) : value;
 }
 
 const parseNode = (node: unknown, id: string): Nullable<IHtmlNode> => {
@@ -100,7 +114,7 @@ const parseNode = (node: unknown, id: string): Nullable<IHtmlNode> => {
   const attrs = Object.fromEntries(
     Object.entries(rawAttrs)
       .filter(([name, value]) => typeof value === 'string' && name !== 'style' && !name.startsWith('on'))
-      .map(([name, value]) => [name, name === 'class' ? classAttr : value as string])
+      .map(([name, value]) => [name, parseAttrValue(name, value as string, classAttr)])
   );
 
   return {

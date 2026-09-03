@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {IHtmlNode} from "~/types/constructor";
+import {getBlockNumber} from "~/utils/constructor/getId";
 
 defineProps({
   /** Путь от самого главного блока до выбранного */
@@ -11,11 +12,7 @@ defineProps({
 
 const emit = defineEmits(['select-target']);
 
-/** id — цепочка индексов по уровням, поэтому "010" читается как "Блок 1.2.1" */
-const getBlockTitle = (node: IHtmlNode) => {
-  const numbers = node.id.split('').map((index) => Number(index) + 1);
-  return `Блок ${numbers.join('.')}`;
-}
+const getBlockTitle = (node: IHtmlNode) => `Блок ${getBlockNumber(node.id)}`;
 </script>
 
 <template>

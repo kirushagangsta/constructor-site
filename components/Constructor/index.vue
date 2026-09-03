@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import type {IHtmlNode, StyleVariant} from "~/types/constructor";
-import {baseBlock} from "~/constants/constructor/baseBlock";
+import {type BlockKind, blockPresets} from "~/constants/constructor/baseBlock";
+import {voidTags} from "~/constants/constructor/tags";
 import {getNodesPath} from "~/utils/constructor/getNodesPath";
-import {getTargetId} from "~/utils/constructor/getId";
+import {cloneNode, getBlockNumber, getChildId, reindexChildren} from "~/utils/constructor/getId";
 import {createPageNode} from "~/utils/constructor/page";
 import {parseImportedPage, parsePageContent} from "~/utils/constructor/import";
 import {buildEditorCss, buildPageCss} from "~/utils/constructor/pageCss";
@@ -10,6 +11,7 @@ import {getBreakpoint} from "~/constants/constructor/breakpoints";
 import {buildPageBodyHtml, buildPreviewHtml} from "~/utils/constructor/exportHtml";
 
 const {$api} = useNuxtApp();
+const assetSrc = useAssetSrc();
 
 /** Чем закончилось последнее действие с файлом — это видно в панели */
 const fileMessage = ref('');
@@ -24,7 +26,7 @@ const setFileMessage = (message: string, failed = false) => {
  * Сохранённую страницу тянем уже в браузере: редактор открывается сразу
  * и работает, даже когда сервер молчит.
  */
-const {data: page} = useAsyncData<IHtmlNode>('current-file', async () => {
+const {data: page, status: pageStatus} = useAsyncData<IHtmlNode>('current-file', async () => {
   setFileMessage('Загружаем страницу…');
 
   try {
@@ -43,6 +45,17 @@ const {data: page} = useAsyncData<IHtmlNode>('current-file', async () => {
   server: false,
   lazy: true,
 })
+
+/** Журнал правок: он сам следит за деревом и умеет возвращать его назад */
+const history = usePageHistory(page);
+const {entries: actions, isTrimmed: actionsTrimmed} = history;
+
+/** Загруженная страница — начало журнала, а не первое действие в нём */
+watch(pageStatus, (value) => {
+  if (value !== 'pending') {
+    history.reset();
+  }
+});
 
 const currentTarget = ref<Nullable<string>>(null);
 /** Контрольная точка, которую сейчас правят и показывают на холсте */
@@ -74,17 +87,144 @@ const currentTargetPath = computed(() => {
 /** Когда ни один блок не выбран, редактируется сама страница */
 const currentTargetBlock = computed(() => currentTargetPath.value.at(-1) ?? page.value);
 
-// TODO доработать систему id
-const addBlock = () => {
+/** Внутрь пустого тега вкладывать нечего, поэтому новый блок уходит к его соседям */
+const addTarget = computed(() => {
   const target = currentTargetBlock.value;
-  const newBlock = structuredClone(baseBlock);
-  const isPage = target === page.value;
+  return voidTags.has(target.tag) ? currentTargetPath.value.at(-2) ?? page.value : target;
+})
+
+const addBlock = (kind: BlockKind = 'block') => {
+  const target = addTarget.value;
+  const newBlock = structuredClone(blockPresets[kind]);
 
   target.children.push({
     ...newBlock,
-    id: isPage ? blocks.value.length.toString() : getTargetId(target)
+    id: getChildId(target)
   });
 }
+
+/**
+ * Буфер обмена редактора: в нём лежит слепок блока, а не сам блок,
+ * поэтому правки оригинала после копирования в копию уже не попадают.
+ * shallowRef — чтобы слепок оставался обычным объектом и поддавался клонированию.
+ */
+const clipboard = shallowRef<Nullable<IHtmlNode>>(null);
+
+/** Копируется только выбранный блок: страницу целиком в саму себя не вкладываем */
+const copyBlock = () => {
+  if (!currentTarget.value) {
+    return;
+  }
+
+  clipboard.value = structuredClone(toRaw(currentTargetBlock.value));
+  setFileMessage('Скопировали блок');
+}
+
+/** Копия уходит туда же, куда и новый блок — внутрь выбранного */
+const pasteBlock = () => {
+  if (!clipboard.value) {
+    return;
+  }
+
+  const target = addTarget.value;
+  const id = getChildId(target);
+
+  history.describe(`Вставили копию (блок ${getBlockNumber(id)})`);
+  target.children.push(cloneNode(clipboard.value, id));
+  setFileMessage('Вставили копию блока');
+}
+
+/**
+ * Удаление блока: соседи сдвигаются на его место, поэтому им раздаются новые id —
+ * id блока это и есть его место в дереве. Выбранным становится родитель,
+ * ведь удалённого блока больше нет.
+ */
+const removeBlock = () => {
+  const target = currentTargetBlock.value;
+  // страница — не блок: удалять её нечем и незачем
+  const parent = target === page.value ? null : currentTargetPath.value.at(-2) ?? page.value;
+
+  if (!parent) {
+    return;
+  }
+
+  const index = parent.children.findIndex((child) => typeof child !== 'string' && child.id === target.id);
+
+  if (index === -1) {
+    return;
+  }
+
+  history.describe(`Удалили блок ${getBlockNumber(target.id)}`);
+  parent.children.splice(index, 1);
+  reindexChildren(parent);
+
+  currentTarget.value = parent === page.value ? null : parent.id;
+  setFileMessage('Удалили блок');
+}
+
+/**
+ * Отмена возвращает страницу к состоянию перед действием: выбранного
+ * блока после этого может и не быть — тогда редактируется снова вся страница.
+ */
+const undoAction = (entryId?: number) => {
+  const title = history.undo(entryId);
+
+  if (!title) {
+    setFileMessage('Отменять пока нечего');
+    return;
+  }
+
+  if (currentTarget.value && !currentTargetPath.value.length) {
+    currentTarget.value = null;
+  }
+
+  setFileMessage(`Отменили: ${title.toLowerCase()}`);
+}
+
+/** Пока правят текст или значение в панели, клавиши достаются им */
+const isTyping = (target: EventTarget | null) => {
+  return !!(target as Nullable<HTMLElement>)?.closest?.('input, textarea, select, [contenteditable]');
+}
+
+/**
+ * Горячие клавиши разбираются по самой клавише, а не по букве на ней: в русской
+ * раскладке та же ctrl+c приходит как ctrl+с. Ctrl (он же cmd на маке) — часть
+ * сочетания, поэтому он записан прямо в ключе: delete работает и без него.
+ */
+const shortcuts: Record<string, () => void> = {
+  'ctrl+KeyC': copyBlock,
+  'ctrl+KeyV': pasteBlock,
+  'ctrl+KeyZ': undoAction,
+  'Delete': removeBlock,
+}
+
+const getShortcut = (event: KeyboardEvent) => {
+  return `${event.ctrlKey || event.metaKey ? 'ctrl+' : ''}${event.code}`;
+}
+
+const onKeydown = (event: KeyboardEvent) => {
+  if (event.altKey || isTyping(event.target)) {
+    return;
+  }
+
+  const shortcut = getShortcut(event);
+  const action = shortcuts[shortcut];
+
+  if (!action) {
+    return;
+  }
+
+  // браузеру тут отменять нечего: правки живут в дереве страницы,
+  // а вот копирование выделенного текста оставляем браузеру
+  if (shortcut === 'ctrl+KeyZ') {
+    event.preventDefault();
+  }
+
+  action();
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown));
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
 
 const openImport = () => {
   importError.value = '';
@@ -95,7 +235,10 @@ const openImport = () => {
 /** Импорт заменяет страницу целиком, поэтому выбранный блок сбрасываем */
 const importJson = (json: string) => {
   try {
-    page.value = reactive(parseImportedPage(json));
+    const imported = parseImportedPage(json);
+
+    history.describe('Импортировали страницу');
+    page.value = reactive(imported);
     currentTarget.value = null;
     isImportOpen.value = false;
     setFileMessage(`Загрузили блоков: ${blocks.value.length}. Не забудьте сохранить`);
@@ -106,7 +249,10 @@ const importJson = (json: string) => {
 
 /** Превью собирается прямо в браузере — из того же дерева, что и файл */
 const previewPage = () => {
-  const preview = new Blob([buildPreviewHtml(page.value, pageCss.value)], {type: 'text/html'});
+  // у blob-страницы нет адреса, относительно которого искались бы файлы,
+  // поэтому резолвер превью разворачивает их в полные адреса
+  const html = buildPreviewHtml(page.value, pageCss.value, assetSrc('preview'));
+  const preview = new Blob([html], {type: 'text/html'});
   const previewUrl = URL.createObjectURL(preview);
 
   if (window.open(previewUrl, '_blank')) {
@@ -130,14 +276,30 @@ const saveFile = async () => {
   }
 }
 
+/** Архив приходит потоком в ответе — на диск сервера он не попадает */
+const saveArchive = (archive: Blob) => {
+  const archiveUrl = URL.createObjectURL(archive);
+  const link = document.createElement('a');
+
+  link.href = archiveUrl;
+  link.download = `${$api.fileManager.projectId}.zip`;
+  link.click();
+
+  // ссылка нужна только на время скачивания, дальше файл живёт сам
+  setTimeout(() => URL.revokeObjectURL(archiveUrl), 60000);
+}
+
 const downloadFile = async () => {
   try {
-    const res = await $api.fileManager.downloadFile({
-      content: buildPageBodyHtml(page.value),
+    // в архиве страница лежит рядом со своей папкой файлов, поэтому
+    // и ссылки на них собираются относительными
+    const archive = await $api.fileManager.downloadFile({
+      content: buildPageBodyHtml(page.value, assetSrc('archive')),
       css: pageCss.value,
     })
-    window.open(res.downloadUrl);
+    saveArchive(archive);
     await saveFile();
+    setFileMessage('Собрали архив: страница и её картинки');
   } catch {
     setFileMessage('Не получилось скачать', true);
   }
@@ -179,9 +341,15 @@ const downloadFile = async () => {
       v-model="currentVariant"
       :current-target="currentTargetBlock"
     />
+    <ConstructorToolbarHistory
+      :entries="actions"
+      :trimmed="actionsTrimmed"
+      @undo="undoAction"
+    />
     <ConstructorToolbarBlock
       :current-target="currentTargetBlock"
       :variant="currentVariant"
+      @remove="removeBlock"
     />
 
     <ConstructorImportModal

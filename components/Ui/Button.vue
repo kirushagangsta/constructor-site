@@ -24,7 +24,7 @@ const variantClasses: Record<ButtonVariant, string> = {
     type="button"
     class="flex items-center justify-center gap-[8px] w-full px-[18px] py-[9px] text-[15px] font-bold
     border-2 rounded-pill shadow-soft transition-all duration-200 hover:-translate-y-[1px] hover:shadow-pop
-    active:translate-y-0"
+    active:translate-y-0 disabled:opacity-60 disabled:pointer-events-none"
     :class="variantClasses[variant]"
   >
     <span v-if="icon">{{ icon }}</span>

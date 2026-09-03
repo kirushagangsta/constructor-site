@@ -2,6 +2,8 @@
 import type {IHtmlNode} from "~/types/constructor";
 import {getNodeText, setNodeText} from "~/utils/constructor/text";
 import {getNodeClass} from "~/utils/constructor/pageCss";
+import {voidTags} from "~/constants/constructor/tags";
+import {emptyImageSrc} from "~/constants/constructor/imagePlaceholder";
 
 const props = defineProps({
   /** Узел-страница: его классы и стили применяются к самой рабочей области */
@@ -24,6 +26,8 @@ const props = defineProps({
 const emit = defineEmits(['select-target']);
 
 const field = useTemplateRef('field');
+
+const toEditorSrc = useAssetSrc()('editor');
 
 /** id блока, текст которого сейчас правят прямо на холсте */
 const editingId = ref<Nullable<string>>(null);
@@ -87,8 +91,32 @@ const createEditableText = (node: IHtmlNode, text: string): VNode => h(
   text
 );
 
+/** Свойства vnode, общие для любого блока: свои классы, выбор и подсветка */
+const createNodeAttrs = (node: IHtmlNode) => ({
+  // ссылки на файлы разворачиваются в адреса сервера: в дереве лежит только id
+  ...Object.fromEntries(Object.entries(node.attrs).map(([name, value]) => [name, toEditorSrc(value)])),
+  // классы страницы на холст не выводим: их подхватил бы tailwind самого
+  // редактора — и, например, "md:flex" сработал бы по ширине окна, а не холста
+  class: getNodeClass(node),
+  'data-id': node.id,
+  'data-selected': node.id === props.selectedId ? 'true' : undefined,
+  onClick: (event: MouseEvent) => selectTarget(event, node.id),
+});
+
 /** Рекурсивно превращает описание блока в vnode */
 const createVNode = (node: IHtmlNode): VNode => {
+  /*
+   * У пустых тегов нет ни детей, ни текста, поэтому и правки по двойному клику
+   * им не нужны: картинке файл выбирают в панели. Файла может ещё не быть —
+   * тогда на холсте рисуется заглушка, иначе блок нельзя было бы даже выбрать.
+   */
+  if (voidTags.has(node.tag)) {
+    return h(node.tag, {
+      ...createNodeAttrs(node),
+      ...(node.tag === 'img' ? {src: toEditorSrc(node.attrs.src) || emptyImageSrc} : {}),
+    });
+  }
+
   const isEditing = editingId.value === node.id;
   // правится первый текстовый ребёнок — тот же, в который пишет setNodeText
   const textIndex = node.children.findIndex((child) => typeof child === 'string');
@@ -110,13 +138,7 @@ const createVNode = (node: IHtmlNode): VNode => {
   return h(
     node.tag,
     {
-      ...node.attrs,
-      // классы страницы на холст не выводим: их подхватил бы tailwind самого
-      // редактора — и, например, "md:flex" сработал бы по ширине окна, а не холста
-      class: getNodeClass(node),
-      'data-id': node.id,
-      'data-selected': node.id === props.selectedId ? 'true' : undefined,
-      onClick: (event: MouseEvent) => selectTarget(event, node.id),
+      ...createNodeAttrs(node),
       onDblclick: (event: MouseEvent) => startTextEditing(event, node),
     },
     children
@@ -135,7 +157,7 @@ const createVNode = (node: IHtmlNode): VNode => {
       <span class="w-[10px] h-[10px] rounded-pill bg-accent"></span>
       <span class="w-[10px] h-[10px] rounded-pill bg-primary-soft"></span>
       <span class="ml-[6px] text-[12px] font-semibold text-ink-muted">Рабочая область · {{ width }}px</span>
-      <span class="ml-auto text-[12px] text-ink-muted">двойной клик по блоку — правка текста</span>
+      <span class="ml-auto text-[12px] text-ink-muted">двойной клик — правка текста · ctrl+c / ctrl+v — копия блока</span>
     </div>
 
     <!-- Клик по пустому месту выбирает всю страницу -->

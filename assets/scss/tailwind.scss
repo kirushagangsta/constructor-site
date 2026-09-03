@@ -131,6 +131,16 @@
     }
   }
 
+  /** Строка журнала: клик возвращает страницу к моменту до этого действия */
+  .ui-log-entry {
+    @apply flex items-center gap-[8px] w-full px-[10px] py-[6px] text-[13px] text-ink
+    bg-surface-muted border-2 border-border rounded-lg transition-colors;
+
+    &:hover {
+      @apply border-primary bg-primary-soft;
+    }
+  }
+
   .ui-group {
     @apply border-t-2 border-border pt-[10px];
 
@@ -176,6 +186,11 @@
     &:disabled {
       @apply text-ink-muted bg-primary-soft border-primary-soft cursor-default;
     }
+  }
+
+  /** Загруженная картинка в панели блока — просто чтобы видеть, что выбрано */
+  .ui-image-preview {
+    @apply w-full max-h-[160px] object-contain bg-surface-muted border-2 border-border rounded-md;
   }
 
   .ui-textarea {

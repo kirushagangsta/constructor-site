@@ -2,12 +2,6 @@
 export default defineNuxtConfig({
   compatibilityDate: '2024-04-03',
 
-  nitro: {
-    publicAssets: [
-      { baseURL: 'uploads', dir: './uploads' }
-    ]
-  },
-
   app: {
     head: {
       link: [

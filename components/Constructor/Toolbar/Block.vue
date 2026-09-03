@@ -7,6 +7,8 @@ import {PAGE_ID} from "~/utils/constructor/page";
 import {getVariantDeclarations} from "~/utils/constructor/pageCss";
 import {getBreakpoint} from "~/constants/constructor/breakpoints";
 import {getNodeText, setNodeText} from "~/utils/constructor/text";
+import {imageTypes, MAX_IMAGE_SIZE} from "~/constants/constructor/images";
+import {buildAssetSrc} from "~/utils/constructor/assets";
 
 const props = defineProps({
   currentTarget: {
@@ -20,6 +22,11 @@ const props = defineProps({
   }
 })
 
+const emit = defineEmits<{
+  /** Удалить выбранный блок вместе со всем, что в нём лежит */
+  remove: [];
+}>()
+
 /** Страницу редактируем той же панелью, что и блоки — меняется только заголовок */
 const isPage = computed(() => props.currentTarget.id === PAGE_ID);
 const panelTitle = computed(() => isPage.value ? 'Как выглядит страница' : 'Как выглядит блок');
@@ -31,6 +38,69 @@ const text = computed({
   get: () => getNodeText(props.currentTarget),
   set: (value: string) => setNodeText(props.currentTarget, value)
 })
+
+const {$api} = useNuxtApp();
+const toEditorSrc = useAssetSrc()('editor');
+
+/** У картинки вместо текста файл, поэтому и правят её по-своему */
+const isImage = computed(() => props.currentTarget.tag === 'img');
+
+const imageUrl = computed(() => toEditorSrc(props.currentTarget.attrs.src));
+
+const setAttrs = (attrs: Record<string, string>) => {
+  props.currentTarget.attrs = {...props.currentTarget.attrs, ...attrs};
+}
+
+const alt = computed({
+  get: () => props.currentTarget.attrs.alt ?? '',
+  set: (value: string) => setAttrs({alt: value})
+})
+
+const fileInput = useTemplateRef('fileInput');
+
+const isUploading = ref(false);
+/** Чем закончилась последняя загрузка — это видно прямо под кнопкой */
+const uploadMessage = ref('');
+const uploadFailed = ref(false);
+
+/** Отказ сервер объясняет человеческими словами — их и показываем */
+const getUploadError = (error: unknown) => {
+  return (error as {data?: {data?: {reason?: string}}}).data?.data?.reason || 'Не получилось загрузить картинку';
+}
+
+const uploadImage = async (event: Event) => {
+  const input = event.currentTarget as HTMLInputElement;
+  const file = input.files?.[0];
+
+  // поле сбрасываем сразу, иначе тот же файл нельзя будет выбрать второй раз
+  input.value = '';
+
+  if (!file) {
+    return;
+  }
+
+  isUploading.value = true;
+  uploadMessage.value = 'Загружаем…';
+  uploadFailed.value = false;
+
+  try {
+    const image = await $api.fileManager.uploadImage(file);
+
+    setAttrs({
+      // в дереве остаётся ссылка на файл, а не путь до него
+      src: buildAssetSrc(image.id),
+      // собственный размер картинки: с ним страница не прыгает, пока файл грузится
+      ...(image.width && image.height ? {width: String(image.width), height: String(image.height)} : {}),
+    });
+
+    uploadMessage.value = 'Загрузили. Не забудьте сохранить страницу';
+  } catch (error) {
+    uploadMessage.value = getUploadError(error);
+    uploadFailed.value = true;
+  } finally {
+    isUploading.value = false;
+  }
+}
 
 /** Значения css-свойств выбранного блока, разобранные из его стилей */
 const propertyValues = ref<FormattedClassData>({} as FormattedClassData);
@@ -132,8 +202,82 @@ watch([() => props.currentTarget, () => props.variant], extractTargetStyles)
         <code class="ui-hint">{{ variant }}</code>
       </p>
 
-      <details
+      <UiButton
         v-if="!isPage"
+        variant="soft"
+        icon="🗑️"
+        title="Блок уйдёт вместе со всем, что в нём лежит. Вернуть — ctrl+z"
+        @click="emit('remove')"
+      >
+        Удалить блок
+      </UiButton>
+
+      <details
+        v-if="isImage"
+        open
+        class="ui-group"
+      >
+        <summary class="ui-group__title">
+          <span>🖼️</span>
+          Картинка
+        </summary>
+
+        <div class="flex flex-col gap-[10px] pt-[12px]">
+          <img
+            v-if="imageUrl"
+            :src="imageUrl"
+            :alt="alt"
+            class="ui-image-preview"
+          >
+
+          <UiButton
+            variant="soft"
+            icon="📤"
+            :disabled="isUploading"
+            @click="fileInput?.click()"
+          >
+            {{ currentTarget.attrs.src ? 'Заменить файл' : 'Выбрать файл' }}
+          </UiButton>
+
+          <input
+            ref="fileInput"
+            type="file"
+            class="hidden"
+            :accept="imageTypes.join(',')"
+            aria-label="Файл картинки"
+            @change="uploadImage"
+          >
+
+          <p
+            v-if="uploadMessage"
+            class="text-[13px] font-semibold text-center"
+            :class="uploadFailed ? 'text-primary-strong' : 'text-ink-muted'"
+          >
+            {{ uploadMessage }}
+          </p>
+
+          <span class="text-[12px] leading-snug text-ink-muted">
+            png, jpg, webp или gif до {{ MAX_IMAGE_SIZE / 1024 / 1024 }} МБ.
+            Файл остаётся в проекте и уедет вместе со страницей в архив
+          </span>
+
+          <div class="flex flex-col gap-[6px]">
+            <span class="ui-label">
+              Подпись, если картинка не покажется
+              <code class="ui-hint">alt</code>
+            </span>
+            <input
+              v-model="alt"
+              class="ui-input"
+              placeholder="что на картинке"
+              aria-label="Подпись картинки"
+            >
+          </div>
+        </div>
+      </details>
+
+      <details
+        v-if="!isPage && !isImage"
         open
         class="ui-group"
       >
