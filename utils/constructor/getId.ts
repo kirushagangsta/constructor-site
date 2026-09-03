@@ -1,47 +1,45 @@
 import type {IHtmlNode} from "~/types/constructor";
-import {PAGE_ID} from "~/utils/constructor/page";
 
 /**
- * id блока — это его место в дереве: номера по уровням вложенности через дефис,
- * например '2-0-11'. Разделитель обязателен: без него одиннадцатый ребёнок блока
- * '2' и первый ребёнок блока '2-1' назывались бы одинаково — и редактор путал бы
- * их между собой. Блоки первого уровня живут без префикса страницы: '0', '1', '2'.
+ * id блока — это его имя, а не место в дереве: он выдаётся один раз и больше
+ * никогда не меняется. Поэтому блок можно переносить, удалять его соседей и
+ * вкладывать куда угодно — выделение, стили и записи журнала останутся рабочими.
+ *
+ * Номер вида «1.3.2», который видит человек, из id не выводится: он считается
+ * по пути до блока — см. getNodesPath.
  */
-export const buildId = (parentId: string, index: number | string) => {
-  return parentId === PAGE_ID ? String(index) : `${parentId}-${index}`;
+const ID_PREFIX = 'b';
+
+/** Нумерация продолжается от того, что уже занято на странице, и не идёт назад */
+let lastNumber = 0;
+
+/** id годится, если его можно писать в класс страницы: он уезжает в css как "n-<id>" */
+export const isValidId = (id: unknown): id is string => {
+  return typeof id === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(id);
 }
 
-/** Номера блока по уровням вложенности: '2-0-11' → ['2', '0', '11'] */
-export const getIdPath = (id: string) => id.split('-');
+export const createId = () => `${ID_PREFIX}${++lastNumber}`;
 
 /**
- * Номер блока, как его видит человек: id '0-2-1-7' читается как '1.3.2.8'.
- * Внутри блоки считаются с нуля, а в редакторе — с единицы.
+ * Запоминает занятые id, чтобы новые с ними не совпали. Нужно, когда страница
+ * пришла целиком — из файла или из импорта: её id мы оставляем как есть.
  */
-export const getBlockNumber = (id: string) => {
-  return getIdPath(id).map((index) => Number(index) + 1).join('.');
+export const rememberIds = (ids: Iterable<string>) => {
+  for (const id of ids) {
+    const number = id.startsWith(ID_PREFIX) ? Number(id.slice(ID_PREFIX.length)) : NaN;
+
+    if (Number.isInteger(number)) {
+      lastNumber = Math.max(lastNumber, number);
+    }
+  }
 }
 
-/** Сколько блоков уже лежит в узле: текст детьми не считается */
-const countChildNodes = (node: IHtmlNode) => {
-  return node.children.filter((child) => typeof child !== 'string').length;
-}
-
-/** id нового дочернего блока: следующий свободный номер в этом узле */
-export const getChildId = (parent: IHtmlNode) => buildId(parent.id, countChildNodes(parent));
-
-/**
- * Раздаёт узлу и его детям новые id — цепочкой номеров от переданного.
- * Пишет id на месте, не подменяя массив детей: иначе в дереве оставались бы
- * реактивные обёртки, а их уже не скопировать в буфер обмена.
- */
-const setNodesId = (node: IHtmlNode, id: string): IHtmlNode => {
-  let childIndex = 0;
-
-  node.id = id;
+/** Раздаёт узлу и его детям новые id: копия не должна делить их с оригиналом */
+const setNewIds = (node: IHtmlNode): IHtmlNode => {
+  node.id = createId();
   node.children.forEach((child) => {
     if (typeof child !== 'string') {
-      setNodesId(child, buildId(id, childIndex++));
+      setNewIds(child);
     }
   });
 
@@ -49,24 +47,7 @@ const setNodesId = (node: IHtmlNode, id: string): IHtmlNode => {
 }
 
 /**
- * Раздаёт детям узла id по их новым местам — вместе со всем, что в них вложено.
- * Нужно после удаления блока: соседи сдвигаются, и их id должны сдвинуться тоже.
- */
-export const reindexChildren = (parent: IHtmlNode) => {
-  let childIndex = 0;
-
-  parent.children.forEach((child) => {
-    if (typeof child !== 'string') {
-      setNodesId(child, buildId(parent.id, childIndex++));
-    }
-  });
-}
-
-/**
- * Копия блока со всем содержимым и новыми id: id — это место блока в дереве,
- * поэтому у копии он пересобирается от её нового места.
+ * Копия блока со всем содержимым: id у копии свои, остальное — как у оригинала.
  * Узел должен быть обычным объектом, без реактивной обёртки.
  */
-export const cloneNode = (node: IHtmlNode, id: string): IHtmlNode => {
-  return setNodesId(structuredClone(node), id);
-}
+export const cloneNode = (node: IHtmlNode): IHtmlNode => setNewIds(structuredClone(node));

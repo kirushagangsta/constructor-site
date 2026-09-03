@@ -4,7 +4,7 @@ import {styleVariants} from "~/constants/constructor/breakpoints";
 import {normalizeStyle} from "~/utils/cssClasses/extractor";
 import {stylesFromClasses} from "~/utils/cssClasses/tailwind";
 import {normalizeAssetSrc} from "~/utils/constructor/assets";
-import {buildId} from "~/utils/constructor/getId";
+import {createId, isValidId, rememberIds} from "~/utils/constructor/getId";
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -58,11 +58,36 @@ const parseStyles = (node: Record<string, unknown>, classAttr: string): IHtmlNod
 }
 
 /**
- * id из файла не используем: он должен быть местом блока в дереве, иначе сломаются
- * хлебные крошки и выбор блока. Поэтому раздаём id заново — и страницы, сохранённые
- * со старой схемой, при загрузке сами переезжают на новую.
+ * id из файла берём как есть: это имя блока, а не его место, и за сохранённой
+ * страницей оно должно оставаться между заходами. Не берём только то, что
+ * сломает класс страницы или уже занято другим блоком, — таким раздаём новые.
  */
-const parseChildren = (children: unknown, parentId: string): Array<IHtmlNode | string> => {
+const takeId = (savedId: unknown, claimed: Set<string>) => {
+  const id = isValidId(savedId) && !claimed.has(savedId) ? savedId : createId();
+
+  claimed.add(id);
+
+  return id;
+}
+
+/** Все id, что уже заняты в файле: новые не должны с ними совпасть */
+const collectSavedIds = (node: unknown, ids: string[] = []): string[] => {
+  if (!isPlainObject(node)) {
+    return ids;
+  }
+
+  if (isValidId(node.id)) {
+    ids.push(node.id);
+  }
+
+  if (Array.isArray(node.children)) {
+    node.children.forEach((child) => collectSavedIds(child, ids));
+  }
+
+  return ids;
+}
+
+const parseChildren = (children: unknown, claimed: Set<string>): Array<IHtmlNode | string> => {
   if (!Array.isArray(children)) {
     return [];
   }
@@ -77,7 +102,7 @@ const parseChildren = (children: unknown, parentId: string): Array<IHtmlNode | s
       return;
     }
 
-    const node = parseNode(child, buildId(parentId, parsed.filter((item) => typeof item !== 'string').length));
+    const node = parseNode(child, claimed);
 
     if (node) {
       parsed.push(node);
@@ -100,10 +125,12 @@ const parseAttrValue = (name: string, value: string, classAttr: string) => {
   return name === 'src' ? normalizeAssetSrc(value) : value;
 }
 
-const parseNode = (node: unknown, id: string): Nullable<IHtmlNode> => {
+const parseNode = (node: unknown, claimed: Set<string>, pageId?: string): Nullable<IHtmlNode> => {
   if (!isPlainObject(node)) {
     return null;
   }
+
+  const id = pageId ?? takeId(node.id, claimed);
 
   const rawAttrs = isPlainObject(node.attrs) ? node.attrs : {};
   const classAttr = typeof rawAttrs.class === 'string' ? rawAttrs.class.trim() : '';
@@ -122,7 +149,7 @@ const parseNode = (node: unknown, id: string): Nullable<IHtmlNode> => {
     tag: tag || 'div',
     styles: parseStyles(node, classAttr),
     attrs: classAttr || Object.keys(attrs).length ? attrs : {},
-    children: parseChildren(node.children, id)
+    children: parseChildren(node.children, claimed)
   };
 }
 
@@ -148,11 +175,17 @@ export const parsePageContent = (content: string): IHtmlNode => {
   }
 
   const nodes = Array.isArray(nodesSource) ? nodesSource : [nodesSource];
+
+  // новые блоки этой страницы должны получать id, которых в ней ещё нет
+  rememberIds(nodes.flatMap((node) => collectSavedIds(node)));
+
+  // id страницы занят ею самой: блок из файла с таким же именем получит новый
+  const claimed = new Set([PAGE_ID]);
   const savedPage = nodes.find((node) => isPlainObject(node) && node.id === PAGE_ID);
 
   return savedPage
-    ? parseNode(savedPage, PAGE_ID)!
-    : createPageNode(parseChildren(nodes, PAGE_ID));
+    ? parseNode(savedPage, claimed, PAGE_ID)!
+    : createPageNode(parseChildren(nodes, claimed));
 }
 
 /** То же самое, но для импорта: пустая страница значит, что вставили не то */

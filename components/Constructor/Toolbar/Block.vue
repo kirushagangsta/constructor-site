@@ -25,6 +25,8 @@ const props = defineProps({
 const emit = defineEmits<{
   /** Удалить выбранный блок вместе со всем, что в нём лежит */
   remove: [];
+  /** Положить блок свободно или вернуть его в поток */
+  'toggle-free': [isFree: boolean];
 }>()
 
 /** Страницу редактируем той же панелью, что и блоки — меняется только заголовок */
@@ -102,6 +104,16 @@ const uploadImage = async (event: Event) => {
   }
 }
 
+/**
+ * Свободный блок стоит там, куда его положили, а не в потоке. Смотрим на стиль,
+ * который в самом деле действует на выбранной ширине: его мог задать и человек
+ * руками в поле position — переключатель всё равно покажет правду.
+ */
+const isFree = computed(() => {
+  const {position} = getVariantDeclarations(props.currentTarget, props.variant);
+  return position === 'absolute' || position === 'fixed';
+});
+
 /** Значения css-свойств выбранного блока, разобранные из его стилей */
 const propertyValues = ref<FormattedClassData>({} as FormattedClassData);
 
@@ -161,6 +173,7 @@ const updateStyles = (property: ICssProperty) => {
     delete declarations[property.name];
   }
 
+  isPanelEdit = true;
   props.currentTarget.styles = {...props.currentTarget.styles, [props.variant]: declarations};
 
   if (props.variant !== 'base') {
@@ -174,6 +187,9 @@ const setValue = (property: ICssProperty, value: string) => {
   updateStyles(property);
 }
 
+/** Правку из самой панели перечитывать не нужно: она уже лежит в полях */
+let isPanelEdit = false;
+
 /** Повторное нажатие на включённое слово возвращает поле к числу */
 const toggleKeyword = (property: ICssProperty, keyword: ICssOption) => {
   setValue(property, getActiveKeyword(property)?.value === keyword.value ? '' : keyword.value);
@@ -182,6 +198,20 @@ const toggleKeyword = (property: ICssProperty, keyword: ICssOption) => {
 extractTargetStyles();
 
 watch([() => props.currentTarget, () => props.variant], extractTargetStyles)
+
+/**
+ * Стили блока меняются и мимо панели — свободным размещением, перетаскиванием,
+ * отменой. Поля должны показывать то, что на самом деле у блока, поэтому
+ * перечитываем их на каждую чужую правку.
+ */
+watch(() => props.currentTarget.styles, () => {
+  if (isPanelEdit) {
+    isPanelEdit = false;
+    return;
+  }
+
+  extractTargetStyles();
+}, {deep: true})
 </script>
 
 <template>
@@ -202,15 +232,43 @@ watch([() => props.currentTarget, () => props.variant], extractTargetStyles)
         <code class="ui-hint">{{ variant }}</code>
       </p>
 
-      <UiButton
-        v-if="!isPage"
-        variant="soft"
-        icon="🗑️"
-        title="Блок уйдёт вместе со всем, что в нём лежит. Вернуть — ctrl+z"
-        @click="emit('remove')"
-      >
-        Удалить блок
-      </UiButton>
+      <template v-if="!isPage">
+        <!-- главный переключатель блока: из потока — на свободное место и обратно -->
+        <button
+          type="button"
+          class="ui-free"
+          :class="{'ui-free--on': isFree}"
+          :aria-pressed="isFree"
+          :title="isFree ? 'Вернуть блок в поток, к соседям' : 'Блок можно будет двигать мышкой куда угодно'"
+          @click="emit('toggle-free', !isFree)"
+        >
+          <span class="text-[22px]">🧲</span>
+          <span class="flex-1 min-w-0">
+            <span class="ui-free__title">Свободное размещение</span>
+            <span class="ui-free__hint">
+              {{ isFree ? 'Блок стоит там, куда его положили — тащите мышкой' : 'Блок стоит в потоке, вместе с соседями' }}
+            </span>
+          </span>
+          <span class="ui-free__switch" />
+        </button>
+
+        <p
+          v-if="isFree"
+          class="text-[12px] leading-snug text-primary-strong"
+        >
+          Блок вышел из потока: соседи сомкнулись, а координаты правятся для выбранной ширины.
+          Двигайте мышкой, с shift — шагами по 8px
+        </p>
+
+        <UiButton
+          variant="soft"
+          icon="🗑️"
+          title="Блок уйдёт вместе со всем, что в нём лежит. Вернуть — ctrl+z"
+          @click="emit('remove')"
+        >
+          Удалить блок
+        </UiButton>
+      </template>
 
       <details
         v-if="isImage"

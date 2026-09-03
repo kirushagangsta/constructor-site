@@ -4,6 +4,7 @@ import {getNodeText, setNodeText} from "~/utils/constructor/text";
 import {getNodeClass} from "~/utils/constructor/pageCss";
 import {voidTags} from "~/constants/constructor/tags";
 import {emptyImageSrc} from "~/constants/constructor/imagePlaceholder";
+import {getPlacement, isPositioned} from "~/utils/constructor/position";
 
 const props = defineProps({
   /** Узел-страница: его классы и стили применяются к самой рабочей области */
@@ -23,9 +24,54 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['select-target']);
+const emit = defineEmits(['select-target', 'move-block', 'place-block']);
 
 const field = useTemplateRef('field');
+const canvas = useTemplateRef('canvas');
+
+/** Само перетаскивание живёт здесь, а правки дерева и стилей делает редактор */
+const {dragId, hint, startDrag} = useBlockDrag(canvas, {
+  onMove: (id, target) => emit('move-block', {id, ...target}),
+  onPlace: (id, placement) => emit('place-block', {id, ...placement}),
+});
+
+/**
+ * Где блок стоит сейчас и кому не хватает системы координат. Знает это только
+ * браузер — в дереве лежат стили, а не настоящие размеры, — поэтому меряем
+ * по холсту и отдаём редактору, когда блок кладут свободно.
+ */
+const getBlockPlacement = (id: string) => {
+  const element = canvas.value?.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`);
+  const parent = element?.parentElement?.closest<HTMLElement>('[data-id]');
+
+  if (!element || !parent) {
+    return null;
+  }
+
+  let ancestor = parent;
+
+  // поднимаемся до первого предка со своей системой координат
+  while (!isPositioned(ancestor)) {
+    const next = ancestor.parentElement?.closest<HTMLElement>('[data-id]');
+
+    if (!next) {
+      break;
+    }
+
+    ancestor = next;
+  }
+
+  // ни у кого её нет — значит, её получит непосредственный родитель
+  const isReady = isPositioned(ancestor);
+  const base = isReady ? ancestor : parent;
+
+  return {
+    ...getPlacement(element, base),
+    ancestorId: isReady ? null : parent.getAttribute('data-id'),
+  };
+}
+
+defineExpose({getBlockPlacement});
 
 const toEditorSrc = useAssetSrc()('editor');
 
@@ -37,6 +83,17 @@ const selectTarget = (event: MouseEvent, id: Nullable<string>) => {
   event.preventDefault();
   event.stopPropagation();
   emit('select-target', id);
+}
+
+/** Тащат тот блок, по которому нажали, а не его родителя */
+const onBlockPointerdown = (event: PointerEvent, node: IHtmlNode) => {
+  // пока правят текст, курсор нужен самому тексту
+  if (editingId.value === node.id || (event.target as HTMLElement).isContentEditable) {
+    return;
+  }
+
+  event.stopPropagation();
+  startDrag(event, node.id);
 }
 
 const startTextEditing = (event: MouseEvent, node: IHtmlNode) => {
@@ -100,7 +157,11 @@ const createNodeAttrs = (node: IHtmlNode) => ({
   class: getNodeClass(node),
   'data-id': node.id,
   'data-selected': node.id === props.selectedId ? 'true' : undefined,
+  'data-dragging': node.id === dragId.value ? 'true' : undefined,
+  // блок переносит редактор, поэтому собственное перетаскивание картинок и ссылок выключаем
+  draggable: 'false',
   onClick: (event: MouseEvent) => selectTarget(event, node.id),
+  onPointerdown: (event: PointerEvent) => onBlockPointerdown(event, node),
 });
 
 /** Рекурсивно превращает описание блока в vnode */
@@ -157,16 +218,21 @@ const createVNode = (node: IHtmlNode): VNode => {
       <span class="w-[10px] h-[10px] rounded-pill bg-accent"></span>
       <span class="w-[10px] h-[10px] rounded-pill bg-primary-soft"></span>
       <span class="ml-[6px] text-[12px] font-semibold text-ink-muted">Рабочая область · {{ width }}px</span>
-      <span class="ml-auto text-[12px] text-ink-muted">двойной клик — правка текста · ctrl+c / ctrl+v — копия блока</span>
+      <span class="ml-auto text-[12px] text-ink-muted">
+        двойной клик — текст · ctrl+c / ctrl+v — копия · перетаскивание — перенос
+      </span>
     </div>
 
     <!-- Клик по пустому месту выбирает всю страницу -->
     <div
-      class="ui-canvas flex-1 min-h-0 overflow-y-auto"
+      ref="canvas"
+      class="ui-canvas relative flex-1 min-h-0 overflow-y-auto"
+      :class="{'ui-canvas--dragging': dragId}"
       @click="selectTarget($event, null)"
     >
       <div
         ref="field"
+        :data-id="page.id"
         :class="getNodeClass(page)"
         :data-selected="selectedId === null ? 'true' : undefined"
       >
@@ -176,6 +242,19 @@ const createVNode = (node: IHtmlNode): VNode => {
           :is="createVNode(node)"
         />
       </div>
+
+      <!-- куда встанет блок: линия между соседями или рамка вокруг пустого родителя -->
+      <div
+        v-if="hint"
+        class="ui-drop"
+        :class="hint.isLine ? 'ui-drop--line' : 'ui-drop--box'"
+        :style="{
+          left: `${hint.left}px`,
+          top: `${hint.top}px`,
+          width: `${hint.width}px`,
+          height: `${hint.height}px`,
+        }"
+      />
     </div>
   </div>
 </template>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import type {IHtmlNode, StyleVariant} from "~/types/constructor";
+import type {CssDeclarations, IHtmlNode, StyleVariant} from "~/types/constructor";
 import {type BlockKind, blockPresets} from "~/constants/constructor/baseBlock";
 import {voidTags} from "~/constants/constructor/tags";
-import {getNodesPath} from "~/utils/constructor/getNodesPath";
-import {cloneNode, getBlockNumber, getChildId, reindexChildren} from "~/utils/constructor/getId";
+import {getBlockNumber, getNodesPath} from "~/utils/constructor/getNodesPath";
+import {cloneNode, createId} from "~/utils/constructor/getId";
+import {moveNode} from "~/utils/constructor/move";
 import {createPageNode} from "~/utils/constructor/page";
 import {parseImportedPage, parsePageContent} from "~/utils/constructor/import";
 import {buildEditorCss, buildPageCss} from "~/utils/constructor/pageCss";
@@ -57,6 +58,9 @@ watch(pageStatus, (value) => {
   }
 });
 
+/** Холст умеет померить блок: настоящие размеры знает только браузер */
+const canvasField = useTemplateRef('canvasField');
+
 const currentTarget = ref<Nullable<string>>(null);
 /** Контрольная точка, которую сейчас правят и показывают на холсте */
 const currentVariant = ref<StyleVariant>('xl');
@@ -81,16 +85,16 @@ useHead({
 
 /** Цепочка блоков от самого главного до выбранного — по ней работают хлебные крошки */
 const currentTargetPath = computed(() => {
-  return currentTarget.value ? getNodesPath(blocks.value, currentTarget.value) : [];
+  return currentTarget.value ? getNodesPath(page.value, currentTarget.value) : [];
 })
 
 /** Когда ни один блок не выбран, редактируется сама страница */
-const currentTargetBlock = computed(() => currentTargetPath.value.at(-1) ?? page.value);
+const currentTargetBlock = computed(() => currentTargetPath.value.at(-1)?.node ?? page.value);
 
 /** Внутрь пустого тега вкладывать нечего, поэтому новый блок уходит к его соседям */
 const addTarget = computed(() => {
   const target = currentTargetBlock.value;
-  return voidTags.has(target.tag) ? currentTargetPath.value.at(-2) ?? page.value : target;
+  return voidTags.has(target.tag) ? currentTargetPath.value.at(-2)?.node ?? page.value : target;
 })
 
 const addBlock = (kind: BlockKind = 'block') => {
@@ -99,7 +103,7 @@ const addBlock = (kind: BlockKind = 'block') => {
 
   target.children.push({
     ...newBlock,
-    id: getChildId(target)
+    id: createId()
   });
 }
 
@@ -127,22 +131,24 @@ const pasteBlock = () => {
   }
 
   const target = addTarget.value;
-  const id = getChildId(target);
+  const copy = cloneNode(clipboard.value);
 
-  history.describe(`Вставили копию (блок ${getBlockNumber(id)})`);
-  target.children.push(cloneNode(clipboard.value, id));
+  target.children.push(copy);
+  // номер копии известен только после того, как она встала на место, а журнал
+  // всё равно пишется после отрисовки — успеваем назвать действие и так
+  history.describe(`Вставили копию (блок ${getBlockNumber(getNodesPath(page.value, copy.id))})`);
   setFileMessage('Вставили копию блока');
 }
 
 /**
- * Удаление блока: соседи сдвигаются на его место, поэтому им раздаются новые id —
- * id блока это и есть его место в дереве. Выбранным становится родитель,
- * ведь удалённого блока больше нет.
+ * Удаление блока. Соседи просто сдвигаются: их id — собственные имена, а не
+ * места в дереве, поэтому переписывать после удаления ничего не нужно.
+ * Выбранным становится родитель, ведь удалённого блока больше нет.
  */
 const removeBlock = () => {
   const target = currentTargetBlock.value;
   // страница — не блок: удалять её нечем и незачем
-  const parent = target === page.value ? null : currentTargetPath.value.at(-2) ?? page.value;
+  const parent = target === page.value ? null : currentTargetPath.value.at(-2)?.node ?? page.value;
 
   if (!parent) {
     return;
@@ -154,12 +160,117 @@ const removeBlock = () => {
     return;
   }
 
-  history.describe(`Удалили блок ${getBlockNumber(target.id)}`);
+  history.describe(`Удалили блок ${getBlockNumber(currentTargetPath.value)}`);
   parent.children.splice(index, 1);
-  reindexChildren(parent);
 
   currentTarget.value = parent === page.value ? null : parent.id;
   setFileMessage('Удалили блок');
+}
+
+/** Дописывает блоку стили в выбранную контрольную точку */
+const setDeclarations = (node: IHtmlNode, variant: StyleVariant, declarations: CssDeclarations) => {
+  node.styles = {...node.styles, [variant]: {...node.styles[variant], ...declarations}};
+}
+
+/** Убирает свойства со всех контрольных точек: положение блока не бывает частичным */
+const removeDeclarations = (node: IHtmlNode, properties: string[]) => {
+  node.styles = Object.fromEntries(
+    Object.entries(node.styles).map(([variant, declarations]) => {
+      const rest = {...declarations};
+
+      properties.forEach((property) => delete rest[property]);
+
+      return [variant, rest];
+    })
+  );
+}
+
+/**
+ * Свободное размещение: блок выходит из потока и встаёт туда, где стоял.
+ * Само положение — правка для всех ширин сразу (base): если написать его только
+ * в выбранную точку, на экранах поуже блок вернулся бы в поток, а координаты
+ * перестали бы значить хоть что-то. Дальше их можно править по ширинам.
+ */
+const placeFreely = () => {
+  const target = currentTargetBlock.value;
+  const placement = canvasField.value?.getBlockPlacement(target.id);
+
+  if (!placement) {
+    return;
+  }
+
+  // absolute отсчитывается от ближайшего предка со своей системой координат
+  if (placement.ancestorId) {
+    const ancestor = getNodesPath(page.value, placement.ancestorId).at(-1)?.node ?? page.value;
+
+    setDeclarations(ancestor, 'base', {position: 'relative'});
+  }
+
+  setDeclarations(target, 'base', {
+    position: 'absolute',
+    left: `${placement.left}px`,
+    top: `${placement.top}px`,
+    // в потоке ширину часто давал родитель, а свободный блок ужимается по содержимому
+    width: `${placement.width}px`,
+  });
+
+  history.describe(`Положили блок ${getBlockNumber(currentTargetPath.value)} свободно`);
+  setFileMessage('Блок можно двигать мышкой');
+}
+
+/** Обратно в поток: блок снова встаёт по порядку, рядом с соседями */
+const returnToFlow = () => {
+  removeDeclarations(currentTargetBlock.value, ['position', 'left', 'top', 'right', 'bottom', 'width']);
+  history.describe(`Вернули блок ${getBlockNumber(currentTargetPath.value)} в поток`);
+  setFileMessage('Блок вернулся в поток');
+}
+
+const toggleFreePlacement = (isFree: boolean) => {
+  // страница сама никуда не встаёт: у неё нет ни соседей, ни родителя
+  if (currentTargetBlock.value === page.value) {
+    return;
+  }
+
+  if (isFree) {
+    placeFreely();
+  } else {
+    returnToFlow();
+  }
+}
+
+/**
+ * Свободный блок перетащили по холсту: координаты пишутся в ту ширину, которую
+ * сейчас правят. Привязку к правому и нижнему краю при этом снимаем — блок
+ * тащат за левый верхний угол, и два противоположных края спорили бы между собой.
+ */
+const placeBlock = ({id, left, top}: {id: string; left: number; top: number}) => {
+  const node = getNodesPath(page.value, id).at(-1)?.node;
+
+  if (!node) {
+    return;
+  }
+
+  removeDeclarations(node, ['right', 'bottom']);
+  setDeclarations(node, currentVariant.value, {left: `${left}px`, top: `${top}px`});
+  history.describe(`Подвинули блок ${getBlockNumber(getNodesPath(page.value, id))}`);
+}
+
+/**
+ * Перенос блока с холста: меняется только его место в дереве. id блока при этом
+ * тот же, поэтому за ним едут и стили, и выделение — блок остаётся выбранным.
+ */
+const moveBlock = ({id, parentId, index}: {id: string; parentId: string; index: number}) => {
+  const from = getBlockNumber(getNodesPath(page.value, id));
+
+  if (!moveNode(page.value, id, parentId, index)) {
+    return;
+  }
+
+  const to = getBlockNumber(getNodesPath(page.value, id));
+
+  history.describe(`Перенесли блок ${from} на место ${to}`);
+  currentTarget.value = id;
+  setFileMessage(`Перенесли блок ${from} на место ${to}`);
 }
 
 /**
@@ -321,10 +432,13 @@ const downloadFile = async () => {
 
     <div class="flex-1 min-h-0 max-w-full overflow-x-auto">
       <ConstructorField
+        ref="canvasField"
         :page="page"
         :selected-id="currentTarget"
         :width="canvasWidth"
         @select-target="currentTarget = $event"
+        @move-block="moveBlock"
+        @place-block="placeBlock"
       />
     </div>
 
@@ -350,6 +464,7 @@ const downloadFile = async () => {
       :current-target="currentTargetBlock"
       :variant="currentVariant"
       @remove="removeBlock"
+      @toggle-free="toggleFreePlacement"
     />
 
     <ConstructorImportModal

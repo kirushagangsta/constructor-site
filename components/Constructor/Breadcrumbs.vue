@@ -1,18 +1,19 @@
 <script setup lang="ts">
-import type {IHtmlNode} from "~/types/constructor";
-import {getBlockNumber} from "~/utils/constructor/getId";
+import type {IPathStep} from "~/utils/constructor/getNodesPath";
+import {getBlockNumber} from "~/utils/constructor/getNodesPath";
 
 defineProps({
   /** Путь от самого главного блока до выбранного */
   path: {
-    type: Array as PropType<IHtmlNode[]>,
+    type: Array as PropType<IPathStep[]>,
     required: true
   }
 });
 
 const emit = defineEmits(['select-target']);
 
-const getBlockTitle = (node: IHtmlNode) => `Блок ${getBlockNumber(node.id)}`;
+/** Номер блока — его место в дереве, поэтому считается по пути до него */
+const getBlockTitle = (path: IPathStep[], depth: number) => `Блок ${getBlockNumber(path.slice(0, depth + 1))}`;
 </script>
 
 <template>
@@ -27,8 +28,8 @@ const getBlockTitle = (node: IHtmlNode) => `Блок ${getBlockNumber(node.id)}`
     </button>
 
     <template
-      v-for="(node, index) in path"
-      :key="node.id"
+      v-for="(step, index) in path"
+      :key="step.node.id"
     >
       <span class="text-ink-muted">›</span>
       <button
@@ -36,10 +37,10 @@ const getBlockTitle = (node: IHtmlNode) => `Блок ${getBlockNumber(node.id)}`
         class="ui-chip"
         :class="{'ui-chip--active': index === path.length - 1}"
         :title="index === 0 ? 'Самый главный блок' : 'Блок уровня ' + (index + 1)"
-        @click="emit('select-target', node.id)"
+        @click="emit('select-target', step.node.id)"
       >
-        {{ getBlockTitle(node) }}
-        <code class="ui-hint">{{ node.tag }}</code>
+        {{ getBlockTitle(path, index) }}
+        <code class="ui-hint">{{ step.node.tag }}</code>
       </button>
     </template>
 

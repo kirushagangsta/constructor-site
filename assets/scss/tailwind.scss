@@ -131,6 +131,72 @@
     }
   }
 
+  /**
+   * Главный переключатель блока. Свободное размещение — самая заметная кнопка
+   * панели: ей пользуются те, кто про поток и position ничего не знает.
+   */
+  .ui-free {
+    @apply flex items-center gap-[10px] w-full px-[12px] py-[10px] text-left
+    bg-surface-muted border-2 border-border rounded-lg shadow-soft transition-colors;
+
+    &:hover {
+      @apply border-primary;
+    }
+
+    &--on {
+      @apply bg-primary-soft border-primary;
+    }
+  }
+
+  .ui-free__title {
+    @apply block text-[15px] font-bold text-primary-strong;
+  }
+
+  .ui-free__hint {
+    @apply block text-[12px] leading-snug text-ink-muted;
+  }
+
+  /** Сам ползунок переключателя */
+  .ui-free__switch {
+    @apply relative shrink-0 w-[44px] h-[26px] bg-surface border-2 border-border rounded-pill transition-colors;
+
+    &::after {
+      content: '';
+      @apply absolute top-[3px] left-[3px] w-[16px] h-[16px] bg-border rounded-pill transition-all;
+    }
+  }
+
+  .ui-free--on .ui-free__switch {
+    @apply bg-primary border-primary;
+
+    &::after {
+      @apply left-[21px] bg-surface;
+    }
+  }
+
+  /** Место, куда встанет перетаскиваемый блок */
+  .ui-drop {
+    @apply absolute pointer-events-none;
+    z-index: 9999;
+  }
+
+  .ui-drop--line {
+    @apply bg-primary rounded-pill shadow-pop;
+  }
+
+  .ui-drop--box {
+    @apply border-2 border-dashed border-primary rounded-sm;
+  }
+
+  /** Пока блок едет, холст не выделяет текст, а сам блок бледнеет */
+  .ui-canvas--dragging {
+    @apply cursor-grabbing select-none;
+
+    [data-dragging='true'] {
+      @apply opacity-40;
+    }
+  }
+
   /** Строка журнала: клик возвращает страницу к моменту до этого действия */
   .ui-log-entry {
     @apply flex items-center gap-[8px] w-full px-[10px] py-[6px] text-[13px] text-ink
