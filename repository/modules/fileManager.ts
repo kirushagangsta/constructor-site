@@ -10,7 +10,8 @@ export default class FileManagerModule extends FetchFactory {
     return await this.call('POST', '/saveFile', { content });
   }
 
-  async downloadFile({ content }: { content: string }): Promise<{ downloadUrl: string }> {
-    return await this.call('POST', '/downloadFile', { content });
+  /** content — разметка страницы, css — её стили: на сервере из них собирается html-файл */
+  async downloadFile({ content, css }: { content: string, css: string }): Promise<{ downloadUrl: string }> {
+    return await this.call('POST', '/downloadFile', { content, css });
   }
 }

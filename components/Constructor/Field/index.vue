@@ -1,53 +1,159 @@
 <script setup lang="ts">
 import type {IHtmlNode} from "~/types/constructor";
+import {getNodeText, setNodeText} from "~/utils/constructor/text";
+import {getNodeClass} from "~/utils/constructor/pageCss";
 
 const props = defineProps({
-  nodes: {
-    type: Array as PropType<IHtmlNode[]>,
+  /** Узел-страница: его классы и стили применяются к самой рабочей области */
+  page: {
+    type: Object as PropType<IHtmlNode>,
     required: true
+  },
+  /** id выбранного блока; null — выбрана вся страница */
+  selectedId: {
+    type: String as PropType<Nullable<string>>,
+    default: null
+  },
+  /** Ширина рабочей области — под неё и правят выбранную контрольную точку */
+  width: {
+    type: Number,
+    default: 1140
   }
 });
 
-const field = useTemplateRef('field');
-
 const emit = defineEmits(['select-target']);
 
-const createVNode = (item: IHtmlNode): VNode => {
+const field = useTemplateRef('field');
+
+/** id блока, текст которого сейчас правят прямо на холсте */
+const editingId = ref<Nullable<string>>(null);
+
+const selectTarget = (event: MouseEvent, id: Nullable<string>) => {
+  // на холсте ссылки не ведут никуда: клик по блоку — это его выбор
+  event.preventDefault();
+  event.stopPropagation();
+  emit('select-target', id);
+}
+
+const startTextEditing = (event: MouseEvent, node: IHtmlNode) => {
+  // правим тот блок, по которому кликнули, а не его родителя
+  event.stopPropagation();
+  editingId.value = node.id;
+  const block = event.currentTarget as HTMLElement;
+
+  nextTick(() => {
+    const editable = block.querySelector(':scope > [data-editing="true"]') as Nullable<HTMLElement>;
+
+    if (!editable) {
+      return;
+    }
+
+    editable.focus();
+    getSelection()?.selectAllChildren(editable);
+    getSelection()?.collapseToEnd();
+  });
+}
+
+/** Блоки приходят из общего дерева конструктора, поэтому текст правится прямо в узле */
+const finishTextEditing = (event: Event, node: IHtmlNode) => {
+  setNodeText(node, (event.currentTarget as HTMLElement).innerText);
+  editingId.value = null;
+}
+
+const onTextKeydown = (event: KeyboardEvent, node: IHtmlNode) => {
+  const element = event.currentTarget as HTMLElement;
+
+  if (event.key === 'Escape') {
+    element.innerText = getNodeText(node);
+    element.blur();
+  } else if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    element.blur();
+  }
+}
+
+/**
+ * Редактируемым делается только текст блока, а не блок целиком,
+ * иначе внутри contenteditable можно было бы снести вложенные блоки.
+ */
+const createEditableText = (node: IHtmlNode, text: string): VNode => h(
+  'span',
+  {
+    contenteditable: 'plaintext-only',
+    'data-editing': 'true',
+    onBlur: (event: Event) => finishTextEditing(event, node),
+    onKeydown: (event: KeyboardEvent) => onTextKeydown(event, node),
+  },
+  text
+);
+
+/** Рекурсивно превращает описание блока в vnode */
+const createVNode = (node: IHtmlNode): VNode => {
+  const isEditing = editingId.value === node.id;
+  // правится первый текстовый ребёнок — тот же, в который пишет setNodeText
+  const textIndex = node.children.findIndex((child) => typeof child === 'string');
+
+  const children = node.children
+    .map((child, index) => {
+      if (typeof child !== 'string') {
+        return createVNode(child);
+      }
+
+      return isEditing && index === textIndex ? createEditableText(node, child) : child;
+    })
+    .filter((child) => !!child);
+
+  if (isEditing && textIndex === -1) {
+    children.unshift(createEditableText(node, ''));
+  }
+
   return h(
-    item.tag,
+    node.tag,
     {
-      ...item.attrs,
-      'data-id': item.id,
-      onClick: (e: MouseEvent) => {
-        e.stopPropagation();
-        emit('select-target', item.id);
-      },
+      ...node.attrs,
+      // классы страницы на холст не выводим: их подхватил бы tailwind самого
+      // редактора — и, например, "md:flex" сработал бы по ширине окна, а не холста
+      class: getNodeClass(node),
+      'data-id': node.id,
+      'data-selected': node.id === props.selectedId ? 'true' : undefined,
+      onClick: (event: MouseEvent) => selectTarget(event, node.id),
+      onDblclick: (event: MouseEvent) => startTextEditing(event, node),
     },
-    [
-      ...item.children.map((el: IHtmlNode | string) => {
-        return typeof el === 'string' ? el : createVNode(el);
-      }).filter((el) => !!el),
-    ]
+    children
   );
 };
-
-defineExpose({
-  field
-})
 </script>
 
 <template>
-  <div class="w-[1140px] h-full border border-[#000000]">
+  <div
+    class="flex flex-col h-full bg-surface border-2 border-primary-soft shadow-soft"
+    :style="{width: width + 'px'}"
+  >
+    <!-- Рамка холста: всё украшение снаружи, сама рабочая область остаётся чистой -->
+    <div class="flex items-center gap-[6px] px-[12px] py-[7px] bg-surface-muted border-b-2 border-primary-soft">
+      <span class="w-[10px] h-[10px] rounded-pill bg-primary"></span>
+      <span class="w-[10px] h-[10px] rounded-pill bg-accent"></span>
+      <span class="w-[10px] h-[10px] rounded-pill bg-primary-soft"></span>
+      <span class="ml-[6px] text-[12px] font-semibold text-ink-muted">Рабочая область · {{ width }}px</span>
+      <span class="ml-auto text-[12px] text-ink-muted">двойной клик по блоку — правка текста</span>
+    </div>
+
+    <!-- Клик по пустому месту выбирает всю страницу -->
     <div
-      ref="field"
+      class="ui-canvas flex-1 min-h-0 overflow-y-auto"
+      @click="selectTarget($event, null)"
     >
-      <component
-        v-for="node in nodes"
-        :key="node.id"
-        :is="createVNode(node)"
-        @click.stop="emit('select-target', node.id)"
+      <div
+        ref="field"
+        :class="getNodeClass(page)"
+        :data-selected="selectedId === null ? 'true' : undefined"
       >
-      </component>
+        <component
+          v-for="node in (page.children as IHtmlNode[])"
+          :key="node.id"
+          :is="createVNode(node)"
+        />
+      </div>
     </div>
   </div>
 </template>

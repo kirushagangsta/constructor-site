@@ -8,6 +8,8 @@ export default defineNuxtPlugin({
 
     const apiFetcher = $fetch.create({ // создаем экземпляр фетчера
       baseURL: config.public.apiUrl as string,
+      // если сервер не отвечает, запрос должен упасть, а не висеть вечно
+      timeout: 10000,
     })
 
     const modules = {

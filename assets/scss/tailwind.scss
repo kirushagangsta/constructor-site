@@ -8,11 +8,11 @@
   }
 
   html {
-    @apply h-full leading-normal font-lora text-[16px] antialiased;
+    @apply h-full leading-normal font-main text-[16px] text-ink antialiased;
   }
 
   body {
-    @apply relative h-full bg-white;
+    @apply relative h-full bg-bg;
 
     #__nuxt {
       @apply h-full;
@@ -22,8 +22,195 @@
   input, textarea {
     @apply appearance-none;
   }
-  
+
   button {
     @apply select-none;
+  }
+
+  /** Блоки на холсте кликабельны, выбранный подсвечивается (только в редакторе) */
+  [data-id] {
+    cursor: pointer;
+  }
+
+  [data-editing="true"] {
+    display: inline-block;
+    // чтобы в пустой текст можно было попасть курсором
+    min-width: 20px;
+    outline: 2px solid var(--color-accent) !important;
+    outline-offset: 2px;
+    cursor: text;
+  }
+
+  [data-selected="true"] {
+    // !important нужен, чтобы перебить сброс outline у всех элементов выше
+    outline: 2px dashed var(--color-primary-strong) !important;
+    outline-offset: 2px;
+  }
+}
+
+/**
+ * Базовые «кирпичики» интерфейса. Все значения берутся из токенов,
+ * поэтому смена темы не требует правок в компонентах.
+ */
+@layer components {
+  .ui-panel {
+    @apply bg-surface border-2 border-border rounded-lg shadow-soft p-[20px];
+  }
+
+  /**
+   * Рабочая область. Страница внутри живёт своей жизнью: у её блоков бывают
+   * свои z-index и position: fixed. isolation держит их слои внутри холста,
+   * а contain делает холст точкой отсчёта для fixed — иначе всё это
+   * вылезает поверх панелей редактора.
+   */
+  .ui-canvas {
+    isolation: isolate;
+    contain: layout paint;
+  }
+
+  /** Шапка панели — она же ручка для перетаскивания */
+  .ui-panel__drag {
+    @apply flex items-center gap-[8px] px-[20px] py-[14px] cursor-grab select-none
+    bg-surface-muted border-b-2 border-border rounded-t-lg;
+    touch-action: none;
+
+    &--active {
+      @apply cursor-grabbing;
+    }
+  }
+
+  .ui-panel__title {
+    @apply text-[18px] font-bold text-primary-strong;
+  }
+
+  .ui-panel__reset {
+    @apply ml-auto w-[22px] h-[22px] leading-none text-[14px] text-primary-strong
+    bg-surface border-2 border-border rounded-pill transition-colors;
+
+    &:hover {
+      @apply border-primary bg-primary-soft;
+    }
+  }
+
+  .ui-panel__grip {
+    @apply text-[16px] text-primary;
+  }
+
+  /** Уголок для изменения размера */
+  .ui-resize-handle {
+    @apply absolute right-[5px] bottom-[5px] w-[16px] h-[16px] rounded-sm text-primary cursor-nwse-resize;
+    background: repeating-linear-gradient(-45deg, currentColor 0 2px, transparent 2px 5px);
+    touch-action: none;
+  }
+
+  .ui-label {
+    @apply flex flex-wrap items-center gap-[6px] text-[14px] font-semibold text-ink-muted;
+  }
+
+  /** Подсказка для тех, кто знает css: настоящее имя свойства или значения */
+  .ui-hint {
+    @apply px-[6px] py-[1px] text-[11px] font-normal font-mono
+    text-accent bg-accent-soft rounded-pill;
+  }
+
+  /** Переключатель значения-слова (auto, fit-content...) */
+  .ui-chip {
+    @apply flex items-center gap-[6px] px-[10px] py-[4px] text-[13px] font-semibold
+    text-primary-strong bg-surface-muted border-2 border-border rounded-pill transition-colors;
+
+    &:hover {
+      @apply border-primary;
+    }
+  }
+
+  .ui-chip--active {
+    @apply text-surface bg-primary border-primary;
+
+    .ui-hint {
+      @apply text-surface bg-primary-strong;
+    }
+  }
+
+  .ui-group {
+    @apply border-t-2 border-border pt-[10px];
+
+    &:first-of-type {
+      @apply border-t-0 pt-0;
+    }
+  }
+
+  .ui-group__title {
+    @apply flex items-center gap-[8px] list-none cursor-pointer select-none
+    text-[15px] font-bold text-primary-strong;
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+  }
+
+  .ui-color {
+    @apply shrink-0 w-[38px] h-[38px] p-0 bg-surface-muted border-2 border-border rounded-pill cursor-pointer;
+
+    &::-webkit-color-swatch-wrapper {
+      padding: 3px;
+    }
+
+    &::-webkit-color-swatch {
+      border: none;
+      border-radius: var(--radius-pill);
+    }
+  }
+
+  .ui-input {
+    @apply w-full min-w-0 px-[14px] py-[7px] text-[14px] text-ink bg-surface-muted
+    border-2 border-border rounded-pill transition-colors;
+
+    &:hover:not(:disabled) {
+      @apply border-primary;
+    }
+
+    &:focus {
+      @apply border-primary-strong bg-surface;
+    }
+
+    &:disabled {
+      @apply text-ink-muted bg-primary-soft border-primary-soft cursor-default;
+    }
+  }
+
+  .ui-textarea {
+    @apply w-full min-w-0 px-[14px] py-[8px] text-[14px] leading-snug text-ink bg-surface-muted
+    border-2 border-border rounded-md resize-y transition-colors;
+
+    &:hover {
+      @apply border-primary;
+    }
+
+    &:focus {
+      @apply border-primary-strong bg-surface;
+    }
+  }
+
+  /** Модальное окно — та же «панелька», но по центру экрана и с подложкой */
+  .ui-modal {
+    @apply fixed inset-0 flex-col m-auto p-0 max-w-[calc(100vw-32px)] max-h-[calc(100vh-64px)]
+    text-ink bg-surface border-2 border-border rounded-lg shadow-pop;
+
+    &[open] {
+      @apply flex;
+    }
+
+    &::backdrop {
+      background: rgba(91, 58, 74, 0.35);
+    }
+  }
+
+  .ui-modal__header {
+    @apply flex items-center gap-[8px] px-[20px] py-[14px]
+    bg-surface-muted border-b-2 border-border rounded-t-lg;
+  }
+
+  select.ui-input {
+    @apply pr-[8px] cursor-pointer;
   }
 }

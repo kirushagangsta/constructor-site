@@ -1,5 +1,7 @@
 import type {IHtmlNode} from "~/types/constructor";
 
+/** id нового дочернего блока: id родителя + порядковый номер среди вложенных блоков */
 export const getTargetId = (target: IHtmlNode) => {
-  return target.id.toString() + target.children.filter((el: IHtmlNode | string) => typeof el !== 'string').length.toString();
+  const childNodesCount = target.children.filter((child) => typeof child !== 'string').length;
+  return `${target.id}${childNodesCount}`;
 }

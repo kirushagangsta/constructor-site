@@ -1,0 +1,36 @@
+/**
+ * Дизайн-токены — единственное место, где заданы цвета, скругления и тени.
+ * Чтобы сделать редизайн, достаточно поменять значения здесь: компоненты
+ * ссылаются только на семантические имена (surface, primary, ink и т.д.).
+ */
+:root {
+  /* Палитра: нежно-розовая, «девчачья» */
+  --color-bg: #fff5f9;
+  --color-bg-accent: #ffe9f3;
+  --color-surface: #ffffff;
+  --color-surface-muted: #fff0f6;
+
+  --color-primary: #ff8ab8;
+  --color-primary-strong: #ff5fa2;
+  --color-primary-soft: #ffdcea;
+
+  --color-accent: #c79bff;
+  --color-accent-soft: #ece0ff;
+
+  --color-ink: #5b3a4a;
+  --color-ink-muted: #ad8394;
+  --color-border: #ffd6e6;
+
+  /* Скругления */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 26px;
+  --radius-pill: 999px;
+
+  /* Тени */
+  --shadow-soft: 0 10px 30px -12px rgba(255, 95, 162, 0.45);
+  --shadow-pop: 0 14px 28px -10px rgba(255, 95, 162, 0.55);
+
+  /* Типографика */
+  --font-main: 'Nunito', 'Comfortaa', 'Segoe UI', sans-serif;
+}

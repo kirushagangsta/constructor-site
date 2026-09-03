@@ -1,83 +1,193 @@
 <script setup lang="ts">
-import type {IHtmlNode} from "~/types/constructor";
+import type {IHtmlNode, StyleVariant} from "~/types/constructor";
 import {baseBlock} from "~/constants/constructor/baseBlock";
-import {recursiveFind} from "~/utils/constructor/recursiveFind";
+import {getNodesPath} from "~/utils/constructor/getNodesPath";
 import {getTargetId} from "~/utils/constructor/getId";
+import {createPageNode} from "~/utils/constructor/page";
+import {parseImportedPage, parsePageContent} from "~/utils/constructor/import";
+import {buildEditorCss, buildPageCss} from "~/utils/constructor/pageCss";
+import {getBreakpoint} from "~/constants/constructor/breakpoints";
+import {buildPageBodyHtml, buildPreviewHtml} from "~/utils/constructor/exportHtml";
 
 const {$api} = useNuxtApp();
 
-const {data: htmlItems} = useAsyncData<IHtmlNode[]>('current-file', async () => {
-  const res = await $api.fileManager.getFile();
-  const parsed = JSON.parse(res) || [];
-  return reactive(parsed as IHtmlNode[]);
+/** Чем закончилось последнее действие с файлом — это видно в панели */
+const fileMessage = ref('');
+const fileFailed = ref(false);
+
+const setFileMessage = (message: string, failed = false) => {
+  fileMessage.value = message;
+  fileFailed.value = failed;
+}
+
+/**
+ * Сохранённую страницу тянем уже в браузере: редактор открывается сразу
+ * и работает, даже когда сервер молчит.
+ */
+const {data: page} = useAsyncData<IHtmlNode>('current-file', async () => {
+  setFileMessage('Загружаем страницу…');
+
+  try {
+    const res = await $api.fileManager.getFile();
+    setFileMessage('');
+
+    return reactive(parsePageContent(res));
+  } catch {
+    // файла ещё нет, он испорчен или сервер недоступен — начинаем с пустой страницы
+    setFileMessage('Не удалось загрузить сохранённую страницу', true);
+
+    return reactive(createPageNode());
+  }
 }, {
-  default: () => reactive([] as IHtmlNode[]),
+  default: () => reactive(createPageNode()),
+  server: false,
+  lazy: true,
 })
 
 const currentTarget = ref<Nullable<string>>(null);
-const constructorField = useTemplateRef('field');
+/** Контрольная точка, которую сейчас правят и показывают на холсте */
+const currentVariant = ref<StyleVariant>('xl');
 
-const currentTargetBlock = computed(() => {
-  return currentTarget.value ? recursiveFind(htmlItems.value, currentTarget.value) : null;
+const isImportOpen = ref(false);
+/** Ошибка разбора json — её видно в окне импорта */
+const importError = ref('');
+
+const blocks = computed(() => page.value.children as IHtmlNode[]);
+
+/** Css для файла и превью — с медиазапросами по контрольным точкам */
+const pageCss = computed(() => buildPageCss(page.value));
+
+/** Css для холста — страница такой, какой она будет на выбранной ширине */
+const editorCss = computed(() => buildEditorCss(page.value, currentVariant.value));
+
+const canvasWidth = computed(() => getBreakpoint(currentVariant.value).canvasWidth);
+
+useHead({
+  style: [{id: 'constructor-page', innerHTML: editorCss}]
+});
+
+/** Цепочка блоков от самого главного до выбранного — по ней работают хлебные крошки */
+const currentTargetPath = computed(() => {
+  return currentTarget.value ? getNodesPath(blocks.value, currentTarget.value) : [];
 })
+
+/** Когда ни один блок не выбран, редактируется сама страница */
+const currentTargetBlock = computed(() => currentTargetPath.value.at(-1) ?? page.value);
 
 // TODO доработать систему id
 const addBlock = () => {
   const target = currentTargetBlock.value;
-  const newBaseBlock = JSON.parse(JSON.stringify(baseBlock));
-  if (currentTarget.value && target) {
-    if ("children" in target) {
-      target.children.push({...newBaseBlock, id: getTargetId(target)});
-    }
-  } else {
-    htmlItems.value.push({...newBaseBlock, id: htmlItems.value.length.toString()});
+  const newBlock = structuredClone(baseBlock);
+  const isPage = target === page.value;
+
+  target.children.push({
+    ...newBlock,
+    id: isPage ? blocks.value.length.toString() : getTargetId(target)
+  });
+}
+
+const openImport = () => {
+  importError.value = '';
+  setFileMessage('');
+  isImportOpen.value = true;
+}
+
+/** Импорт заменяет страницу целиком, поэтому выбранный блок сбрасываем */
+const importJson = (json: string) => {
+  try {
+    page.value = reactive(parseImportedPage(json));
+    currentTarget.value = null;
+    isImportOpen.value = false;
+    setFileMessage(`Загрузили блоков: ${blocks.value.length}. Не забудьте сохранить`);
+  } catch (error) {
+    importError.value = (error as Error).message;
   }
 }
 
-async function saveFile() {
+/** Превью собирается прямо в браузере — из того же дерева, что и файл */
+const previewPage = () => {
+  const preview = new Blob([buildPreviewHtml(page.value, pageCss.value)], {type: 'text/html'});
+  const previewUrl = URL.createObjectURL(preview);
+
+  if (window.open(previewUrl, '_blank')) {
+    setFileMessage('Превью открыли в новой вкладке');
+  } else {
+    setFileMessage('Браузер не дал открыть новую вкладку', true);
+  }
+
+  // ссылка нужна только на время открытия вкладки, дальше страница живёт сама
+  setTimeout(() => URL.revokeObjectURL(previewUrl), 60000);
+}
+
+const saveFile = async () => {
   try {
     await $api.fileManager.saveFile({
-      content: htmlItems.value
+      content: [page.value]
     })
-  } catch (error) {
-    console.error('Error:', error);
+    setFileMessage('Сохранили');
+  } catch {
+    setFileMessage('Не получилось сохранить', true);
   }
 }
 
-async function downloadFile() {
-  if (constructorField.value?.field) {
-    try {
-      // TODO рендерить на сервере, чтобы cносить style атрибуты
-      const res = await $api.fileManager.downloadFile({
-        content: constructorField.value.field.outerHTML,
-      })
-      window.open(res.downloadUrl);
-      await saveFile();
-    } catch (error) {
-      console.error('Error:', error);
-    }
+const downloadFile = async () => {
+  try {
+    const res = await $api.fileManager.downloadFile({
+      content: buildPageBodyHtml(page.value),
+      css: pageCss.value,
+    })
+    window.open(res.downloadUrl);
+    await saveFile();
+  } catch {
+    setFileMessage('Не получилось скачать', true);
   }
 }
 </script>
 
 <template>
-  <div class="h-full w-fit mx-auto p-[10px]">
-    <div class="border-[#FF0000]  bg-[black]"></div>
-    <ConstructorField
-      ref="field"
-      :nodes="htmlItems"
+  <div class="flex flex-col gap-[12px] h-full w-fit mx-auto p-[16px]">
+    <h1 class="flex items-center justify-center gap-[8px] text-[20px] font-bold text-primary-strong">
+      <span>🌸</span>
+      Мой конструктор
+      <span>🌸</span>
+    </h1>
+
+    <ConstructorBreadcrumbs
+      :path="currentTargetPath"
       @select-target="currentTarget = $event"
     />
+
+    <div class="flex-1 min-h-0 max-w-full overflow-x-auto">
+      <ConstructorField
+        :page="page"
+        :selected-id="currentTarget"
+        :width="canvasWidth"
+        @select-target="currentTarget = $event"
+      />
+    </div>
+
     <ConstructorToolbarFile
-      class="absolute top-4 left-4 h-fit"
+      :message="fileMessage"
+      :failed="fileFailed"
       @add-block="addBlock"
+      @preview-page="previewPage"
       @save-file="saveFile"
       @download-file="downloadFile"
+      @open-import="openImport"
+    />
+    <ConstructorToolbarBreakpoints
+      v-model="currentVariant"
+      :current-target="currentTargetBlock"
     />
     <ConstructorToolbarBlock
-      v-if="currentTargetBlock"
       :current-target="currentTargetBlock"
-      class="absolute top-4 right-4 h-fit"
+      :variant="currentVariant"
+    />
+
+    <ConstructorImportModal
+      v-model="isImportOpen"
+      :error="importError"
+      @import="importJson"
     />
   </div>
 </template>
