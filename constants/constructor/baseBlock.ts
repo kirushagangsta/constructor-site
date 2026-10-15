@@ -8,7 +8,7 @@ export const baseBlock: Omit<IHtmlNode, 'id'> = {
     base: {width: 'fit-content'}
   },
   attrs: {},
-  children: ['ПОШЕЛ ГАХУЙ'],
+  children: ['Новый блок'],
 }
 
 /**
